@@ -66,13 +66,12 @@ async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(username/name) so we can re-contact you if the channel is lost."
     )
 
-async def main():
+def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("privacy", privacy))
-    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+  main())

@@ -3,13 +3,20 @@ import sqlite3
 from datetime import datetime, timezone
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+)
 
-BOT_TOKEN = os.environ["BOT_TOKEN"].strip()
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 DB_PATH = os.environ.get("DB_PATH", "/var/data/treehouse_users.sqlite3")
 
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is missing. Set it in Render Environment variables.")
+
 def init_db():
-    # Ensure directory exists if using mounted disk path
+    # Ensure DB directory exists (works with Render disk mount at /var/data)
     db_dir = os.path.dirname(DB_PATH)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
@@ -27,7 +34,7 @@ def init_db():
         """)
         con.commit()
 
-def upsert_user(u, source=""):
+def upsert_user(u, source: str = ""):
     now = datetime.now(timezone.utc).isoformat()
     with sqlite3.connect(DB_PATH) as con:
         con.execute("""
@@ -68,10 +75,13 @@ async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     init_db()
+
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("privacy", privacy))
+
+    # This manages the event loop internally (stable on Render)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-  main()
+    main()

@@ -10,64 +10,93 @@ from telegram.ext import (
     ContextTypes,
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("treehouse_register")
+# ----------------------------
+# Logging
+# ----------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("treehouse_bot")
 
+# ----------------------------
+# Env
+# ----------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN missing (set it in Render Environment Variables)")
 
-# IMPORTANT: Render’s filesystem is read-only except /tmp unless you attach a Disk.
-# So default DB lives in /tmp.
-DB_PATH = os.environ.get("DB_PATH", "/tmp/treehouse_register.sqlite").strip()
+# IMPORTANT for Render:
+# - /var/data is NOT writable unless you attach a Disk and mount it there.
+# - So default to /tmp which is writable.
+DB_PATH = os.environ.get("DB_PATH", "/tmp/treehousecollective.sqlite").strip()
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN missing. Set it in Render -> Environment.")
+
+# ----------------------------
+# DB helpers
+# ----------------------------
+def get_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    return conn
 
 def init_db() -> None:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with sqlite3.connect(DB_PATH) as con:
-        con.execute(
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True) if os.path.dirname(DB_PATH) else None
+    with get_conn() as conn:
+        conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS registrations (
-                telegram_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                source TEXT,
-                created_at TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS users (
+                user_id     INTEGER PRIMARY KEY,
+                username    TEXT,
+                first_name  TEXT,
+                last_name   TEXT,
+                source      TEXT,
+                created_at  TEXT,
+                updated_at  TEXT
             )
             """
         )
-        con.commit()
+        conn.commit()
 
 def upsert_user(user, source: str) -> None:
-    created_at = datetime.now(timezone.utc).isoformat()
-    with sqlite3.connect(DB_PATH) as con:
-        con.execute(
+    now = datetime.now(timezone.utc).isoformat()
+    username = user.username or ""
+    first_name = user.first_name or ""
+    last_name = user.last_name or ""
+    source = source or ""
+
+    with get_conn() as conn:
+        conn.execute(
             """
-            INSERT INTO registrations (telegram_id, username, first_name, last_name, source, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(telegram_id) DO UPDATE SET
+            INSERT INTO users (user_id, username, first_name, last_name, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
                 username=excluded.username,
                 first_name=excluded.first_name,
                 last_name=excluded.last_name,
-                source=excluded.source
-            """
-            ,
-            (
-                user.id,
-                user.username or "",
-                user.first_name or "",
-                user.last_name or "",
-                source or "",
-                created_at,
-            ),
+                source=excluded.source,
+                updated_at=excluded.updated_at
+            """,
+            (user.id, username, first_name, last_name, source, now, now),
         )
-        con.commit()
+        conn.commit()
 
+# ----------------------------
+# Handlers
+# ----------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    # deep-link: /start treehouse  -> context.args[0] == "treehouse"
     source = context.args[0] if context.args else ""
-    upsert_user(user, source)
+
+    try:
+        upsert_user(user, source)
+    except Exception:
+        logger.exception("DB write failed")
+        await update.message.reply_text(
+            "⚠️ Sorry — I couldn’t save you right now. Try again in a minute."
+        )
+        return
 
     await update.message.reply_text(
         "✅ You're registered.\n\n"
@@ -81,13 +110,24 @@ async def privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "(username/name) so we can re-contact you if the channel is lost."
     )
 
+async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Quick test endpoint via /health
+    await update.message.reply_text("✅ Bot is running.")
+
+# ----------------------------
+# Main
+# ----------------------------
 def main() -> None:
     init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("privacy", privacy))
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    application = Application.builder().token(BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("privacy", privacy))
+    application.add_handler(CommandHandler("health", health))
+
+    # PTB v20+ uses this (NO Updater)
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
-

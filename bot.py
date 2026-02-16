@@ -1,27 +1,21 @@
 import os
-import logging
+import asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-logging.basicConfig(level=logging.INFO)
-
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN missing")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🌲 Treehouse Collective bot is live."
-    )
+    await update.message.reply_text("🌲 Treehouse Collective bot is live.")
 
-def main():
+async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
 
-    print("Bot starting...")
-    app.run_polling()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await asyncio.Event().wait()  # keep alive forever
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
